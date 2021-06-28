@@ -10,7 +10,6 @@ import fr.igred.omero.repository.ProjectWrapper;
 import ij.IJ;
 import mica.BatchData;
 import mica.process.BatchRunner;
-import omero.gateway.Gateway;
 
 import javax.swing.*;
 import java.awt.Container;
@@ -70,9 +69,9 @@ public class BatchWindow extends JFrame {
 	// existing dataset
 	private final JPanel output3a1 = new JPanel();
 	private final JComboBox<String> projectListOutExist = new JComboBox<>();
-	private final JLabel labelExistprojectname = new JLabel();
+	private final JLabel labelExistProjectName = new JLabel();
 	private final JComboBox<String> datasetListOutExist = new JComboBox<>();
-	private final JLabel labelExistdatasetname = new JLabel();
+	private final JLabel labelExistDatasetName = new JLabel();
 
 	// new dataSet
 	private final JPanel output3a2 = new JPanel();
@@ -84,7 +83,7 @@ public class BatchWindow extends JFrame {
 	private final JPanel output3b = new JPanel();
 	private final JTextField directory = new JTextField(20);
 
-	private final JButton start = new JButton("start");
+	private final JButton start = new JButton("Start");
 	//variables to keep
 	private final BatchData data;
 	private String macroChosen;
@@ -217,8 +216,7 @@ public class BatchWindow extends JFrame {
 		JLabel labelExtension = new JLabel("Suffix of output files :");
 		output1.add(labelExtension);
 		output1.add(extension);
-		extension
-				.setText("_macro"); //extension.setMaximumSize(new Dimension(300, 30));
+		extension.setText("_macro"); //extension.setMaximumSize(new Dimension(300, 30));
 
 		//output2.setLayout(new BoxLayout(output2, BoxLayout.LINE_AXIS));
 		JPanel output2 = new JPanel();
@@ -248,14 +246,14 @@ public class BatchWindow extends JFrame {
 		projectListOutExist.addItemListener(e -> data.setInputProjectId(updateProject(e,
 																					  labelExistproject,
 																					  datasetListOutExist)));
-		output3a1.add(labelExistprojectname);
-		labelExistprojectname.setFont(namefont);
+		output3a1.add(labelExistProjectName);
+		labelExistProjectName.setFont(namefont);
 		JLabel labelExistdataset = new JLabel("Dataset Name: ");
 		output3a1.add(labelExistdataset);
 		output3a1.add(datasetListOutExist);
 		datasetListOutExist.addItemListener(e -> data.setOutputDatasetId(updateDataset(e, labelExistdataset)));
-		output3a1.add(labelExistdatasetname);
-		labelExistdatasetname.setFont(namefont);
+		output3a1.add(labelExistDatasetName);
+		labelExistDatasetName.setFont(namefont);
 		// diff
 		//output3a2.setLayout(new BoxLayout(output3a2, BoxLayout.LINE_AXIS));
 		JLabel labelNewproject = new JLabel("Project Name: ");
@@ -285,6 +283,7 @@ public class BatchWindow extends JFrame {
 		panelBtn.add(start);
 		start.addActionListener(new BoutonValiderDataListener());
 		cp.add(panelBtn);
+		groupList.setSelectedItem(groupmap.get(client.getCurrentGroupId()));
 
 		this.setVisible(true);
 	}
@@ -385,13 +384,10 @@ public class BatchWindow extends JFrame {
 				if (projectIdIn != null) {
 					id = idproj.get(projectIdIn);
 					label.setText("ID = " + id);
-					ItemListener[] listeners = datasets.getItemListeners();
-					datasets.removeItemListener(listeners[0]);
 					datasets.removeAllItems();
 					for (Long datasetId : idmap.get(id)) {
 						datasets.addItem(dataname.get(datasetId));
 					}
-					datasets.addItemListener(listeners[0]);
 					datasets.setSelectedIndex(0);
 				}
 			}
@@ -462,11 +458,8 @@ public class BatchWindow extends JFrame {
 					IJ.log(exception.getMessage());
 				}
 				userIds = new HashMap<>();
-				ItemListener[] listeners = userList.getItemListeners();
-				userList.removeItemListener(listeners[0]);
 				userList.removeAllItems();
 				userList.addItem("All members");
-				userList.addItemListener(listeners[0]);
 				for (ExperimenterWrapper member : members) {
 					userList.addItem(member.getUserName());
 					userIds.put(member.getUserName(), member.getId());
@@ -488,12 +481,6 @@ public class BatchWindow extends JFrame {
 				dataname = (Map<Long, String>) maps.get(2);
 				idata = hashToMap(dataname, idata);
 				projectIds = idproj.keySet();
-				ItemListener[] listeners1 = projectListIn.getItemListeners();
-				projectListIn.removeItemListener(listeners1[0]);
-				ItemListener[] listeners2 = projectListOutNew.getItemListeners();
-				projectListOutNew.removeItemListener(listeners2[0]);
-				ItemListener[] listeners3 = projectListOutExist.getItemListeners();
-				projectListOutExist.removeItemListener(listeners3[0]);
 				projectListIn.removeAllItems();
 				projectListOutNew.removeAllItems();
 				projectListOutExist.removeAllItems();
@@ -502,11 +489,8 @@ public class BatchWindow extends JFrame {
 					projectListOutNew.addItem(project_id);
 					projectListOutExist.addItem(project_id);
 				}
-				projectListIn.addItemListener(listeners1[0]);
 				projectListIn.setSelectedIndex(0);
-				projectListOutNew.addItemListener(listeners2[0]);
 				projectListOutNew.setSelectedIndex(0);
-				projectListOutExist.addItemListener(listeners3[0]);
 				projectListOutExist.setSelectedIndex(0);
 			}
 		}
