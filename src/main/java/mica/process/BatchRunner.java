@@ -1,6 +1,7 @@
 package mica.process;
 
 import fr.igred.omero.Client;
+import fr.igred.omero.GenericObjectWrapper;
 import fr.igred.omero.exception.AccessException;
 import fr.igred.omero.exception.OMEROServerError;
 import fr.igred.omero.exception.ServiceException;
@@ -15,7 +16,6 @@ import ij.gui.Roi;
 import ij.plugin.frame.RoiManager;
 import mica.BatchData;
 import mica.BatchResults;
-import omero.gateway.SecurityContext;
 import omero.gateway.exception.DSAccessException;
 import omero.gateway.exception.DSOutOfServiceException;
 import omero.gateway.facility.ROIFacility;
@@ -29,6 +29,7 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 import javax.swing.JOptionPane;
 import static javax.swing.JOptionPane.showMessageDialog;
@@ -42,6 +43,7 @@ public class BatchRunner extends Thread {
 
 
 	public BatchRunner(BatchData data) {
+		super();
 		this.data = data;
 		this.progress = new ProgressLog(Logger.getLogger(getClass().getName()));
 		this.bResults = null;
@@ -49,6 +51,7 @@ public class BatchRunner extends Thread {
 
 
 	public BatchRunner(BatchData data, ProcessingProgress progress) {
+		super();
 		this.data = data;
 		this.progress = progress;
 		this.bResults = null;
@@ -80,7 +83,7 @@ public class BatchRunner extends Thread {
 	 *
 	 * @see #start()
 	 * @see #stop()
-	 * @see #Thread(ThreadGroup, Runnable, String)
+	 * @see Thread#Thread(ThreadGroup, Runnable, String)
 	 */
 	@Override
 	public void run() {
@@ -94,8 +97,6 @@ public class BatchRunner extends Thread {
 		String macro = data.getMacro();
 		String extension = data.getExtension();
 		String directoryOut = data.getDirectoryOut();
-		String macroChosen = data.getMacro();
-		String extensionChosen = data.getExtension();
 		List<String> pathsImages;
 		List<String> pathsAttach;
 		List<Collection<ROIData>> roisL;
@@ -103,12 +104,10 @@ public class BatchRunner extends Thread {
 		List<Long> imagesIds;
 		boolean imaRes;
 
-
 		try {
 			if (!saveOnOmero) {
 				setProgress("Temporary directory creation...");
-				Path directoryOutf = Files
-						.createTempDirectory("Fiji_analyse");
+				Path directoryOutf = Files.createTempDirectory("Fiji_analyse");
 				data.setDirectoryOut(directoryOutf.toString());
 			}
 
@@ -117,13 +116,8 @@ public class BatchRunner extends Thread {
 				DatasetWrapper dataset = client.getDataset(inputDatasetId);
 				List<ImageWrapper> images = dataset.getImages(client);
 				setProgress("Macro running...");
-				run_macro(bResults, images, client.getCtx(), macro, extension, directoryOut, results, saveROIs);
+				runMacro(images, macro, extension, directoryOut, results, saveROIs);
 				setState("");
-				pathsImages = bResults.getPathImages();
-				pathsAttach = bResults.getPathAttach();
-				roisL = bResults.getmROIS();
-				imaIds = bResults.getImageIds();
-				imaRes = bResults.getImaRes();
 				if (data.shouldClearROIs()) {
 					deleteROIs(images);
 				}
@@ -131,43 +125,43 @@ public class BatchRunner extends Thread {
 				setProgress("Images recovery from input folder...");
 				List<String> images = getImagesFromDirectory(data.getDirectoryIn());
 				setProgress("Macro running...");
-				run_macro_on_local_images(bResults, images, macroChosen, extensionChosen, directoryOut, results, saveROIs);
+				runMacroOnLocalImages(images, macro, extension, directoryOut, results, saveROIs);
 				setState("");
-				pathsImages = bResults.getPathImages();
-				pathsAttach = bResults.getPathAttach();
-				roisL = bResults.getmROIS();
-				imaRes = bResults.getImaRes();
 			}
+			pathsImages = bResults.getPathImages();
+			pathsAttach = bResults.getPathAttach();
+			roisL = bResults.getmROIS();
+			imaIds = bResults.getImageIds();
+			imaRes = bResults.getImaRes();
 
-			if ((data.shouldnewDataSet() && imaRes)) {
+			if (data.shouldnewDataSet() && !imaRes) {
 				setProgress("New dataset creation...");
 				ProjectWrapper project = client.getProject(data.getProjectIdOut());
-				DatasetWrapper dataset = project
-						.addDataset(client, data.getNameNewDataSet(), "");
-				inputDatasetId = create_dataset_in_project(client.getGateway(), client
-						.getCtx(), dataset, project); // La fonction n'est pas trouvable, tu comptes en utiliser une autre?
+				DatasetWrapper dataset = project.addDataset(client, data.getNameNewDataSet(), "");
+				data.setOutputDatasetId(dataset.getId());
 			}
 
 			if (saveOnOmero) {
 				setProgress("import on omero...");
+				// Default imageIds = input images
+				DatasetWrapper dataset = client.getDataset(inputDatasetId);
+				List<ImageWrapper> images = dataset.getImages(client);
+				imagesIds = images.stream().map(GenericObjectWrapper::getId).collect(Collectors.toList());
 				if (imaRes && saveImage) {
 					imagesIds = importImagesInDataset(pathsImages, roisL, saveROIs);
 				}
-				if (saveImage &&
-					saveROIs) {
+				if (saveImage && saveROIs) {
 					imagesIds = importRoisInImage(imaIds, roisL);
 				}
-				if (results && saveImage &&
-					saveROIs) {
-					setProgress("Attachement of results files...");
-
+				if (results && !saveImage && !saveROIs) {
+					setProgress("Attachment of results files...");
 					uploadTagFiles(pathsAttach, imaIds);
 				} else if (results && saveImage) {
-					setProgress("Attachement of results files...");
+					setProgress("Attachment of results files...");
 					uploadTagFiles(pathsAttach, imagesIds);
 				}
-				if (imaRes && saveImage) {
-					showMessageDialog(null, "Impossible to save: \nOutput image must be different than input image", "Warning", JOptionPane.WARNING_MESSAGE);
+				if (!imaRes && saveImage) {
+					IJ.error("Impossible to save: \nOutput image must be different than input image");
 				}
 			}
 
@@ -175,21 +169,18 @@ public class BatchRunner extends Thread {
 				setProgress("Temporary directory deletion...");
 				deleteTemp(directoryOut);
 			}
-
 			setDone();
-
 		} catch (Exception e3) {
-			if (e3.getMessage().equals("Macro canceled")) {
-				this.dispose();
+			if (e3.getMessage().equals("Macro cancelled")) {
+				setDone();
+				setState("Macro cancelled");
 				IJ.run("Close");
 			}
-			showMessageDialog(null, e3.getMessage(), "Warning", JOptionPane.WARNING_MESSAGE);
+			IJ.error(e3.getMessage());
 		}
 	}
 
 
-	// DatasetWrapper :
-	// dataset.importImages(client, pathsImages);
 	public List<Long> importImagesInDataset(List<String> pathsImages,
 											List<Collection<ROIData>> roisL,
 											boolean saveRois)
@@ -203,7 +194,7 @@ public class BatchRunner extends Thread {
 		DatasetWrapper dataset = client.getDataset(datasetId);
 		for (String path : pathsImages) {
 			List<Long> newIds = dataset.importImage(client, path);
-			newIds.forEach(id -> imageIds.add(id));
+			imageIds.addAll(newIds);
 		}
 
 		int indice = 0;
@@ -218,8 +209,8 @@ public class BatchRunner extends Thread {
 
 	// for(ROIWrapper roi : image.getROIs(client)) client.delete(roi);
 	public void deleteROIs(List<ImageWrapper> images) {
+		setProgress("ROIs deletion from Omero");
 		Client client = data.getClient();
-		System.out.println("ROIs deletion from Omero");
 		for (ImageWrapper image : images) {
 			try {
 				List<ROIWrapper> rois = image.getROIs(client);
@@ -371,12 +362,10 @@ public class BatchRunner extends Thread {
 	}
 
 
-	void run_macro(BatchResults bRes,
-				   List<ImageWrapper> images,
-				   SecurityContext context,
-				   String macroChosen,
-				   String extensionChosen,
-				   String dir,
+	void runMacro(List<ImageWrapper> images,
+				  String macroChosen,
+				  String extensionChosen,
+				  String dir,
 				   boolean results,
 				   boolean savRois)
 	throws ServiceException, AccessException, ExecutionException {
@@ -398,7 +387,7 @@ public class BatchRunner extends Thread {
 			setState("image " + (index + 1) + "/" + images.size());
 			long id = image.getId();
 			imageIds.add(id);
-			long gid = context.getGroupID();
+			long gid = client.getCurrentGroupId();
 			client.switchGroup(gid);
 			client.getImage(id).toImagePlus(client);
 			ImagePlus imp = IJ.getImage();
@@ -516,19 +505,18 @@ public class BatchRunner extends Thread {
 			pathsAttach[index] = attach;
 		}
 
-		bRes.setPathImages((Arrays.asList(pathsImages)));
-		bRes.setPathAttach((Arrays.asList(pathsAttach)));
-		bRes.setmROIS(mROIS);
-		bRes.setImageIds(imageIds);
-		bRes.setImaRes(imaRes);
+		bResults.setPathImages((Arrays.asList(pathsImages)));
+		bResults.setPathAttach((Arrays.asList(pathsAttach)));
+		bResults.setmROIS(mROIS);
+		bResults.setImageIds(imageIds);
+		bResults.setImaRes(imaRes);
 	}
 
 
-	void run_macro_on_local_images(BatchResults bRes,
-								   List<String> images,
-								   String macroChosen,
-								   String extensionChosen,
-								   String dir,
+	void runMacroOnLocalImages(List<String> images,
+							   String macroChosen,
+							   String extensionChosen,
+							   String dir,
 								   boolean results,
 								   boolean savRois) {
 		//""" Run a macro on images from local computer and save the result """
@@ -674,10 +662,10 @@ public class BatchRunner extends Thread {
 			pathsImages[index] = res;
 			pathsAttach[index] = attach;
 		}
-		bRes.setPathImages((Arrays.asList(pathsImages)));
-		bRes.setPathAttach((Arrays.asList(pathsAttach)));
-		bRes.setmROIS(mROIS);
-		bRes.setImaRes(imaRes);
+		bResults.setPathImages((Arrays.asList(pathsImages)));
+		bResults.setPathAttach((Arrays.asList(pathsAttach)));
+		bResults.setmROIS(mROIS);
+		bResults.setImaRes(imaRes);
 	}
 
 
