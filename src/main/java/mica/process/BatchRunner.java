@@ -20,6 +20,7 @@ import mica.gui.ProgressDialog;
 import org.apache.commons.io.FilenameUtils;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.SimpleDateFormat;
@@ -54,6 +55,8 @@ public class BatchRunner extends Thread {
 	private String macro;
 	private String extension;
 	private String nameNewDataSet;
+
+	private BatchListener listener;
 
 
 	public BatchRunner(Client client) {
@@ -100,7 +103,7 @@ public class BatchRunner extends Thread {
 	 */
 	@Override
 	public void run() {
-		if(progress instanceof ProgressDialog) {
+		if (progress instanceof ProgressDialog) {
 			((ProgressDialog) progress).setVisible(true);
 		}
 		List<String> pathsImages;
@@ -173,7 +176,9 @@ public class BatchRunner extends Thread {
 
 			if (outputOnLocal) {
 				setProgress("Temporary directory deletion...");
-				deleteTemp(directoryOut);
+				if (!deleteTemp(directoryOut)) {
+					IJ.log("Temp directory may not be deleted.");
+				}
 			}
 			setDone();
 		} catch (Exception e3) {
@@ -183,6 +188,8 @@ public class BatchRunner extends Thread {
 				IJ.run("Close");
 			}
 			IJ.error(e3.getMessage());
+		} finally {
+			if (listener != null) listener.onThreadFinished();
 		}
 	}
 
@@ -212,9 +219,8 @@ public class BatchRunner extends Thread {
 	}
 
 
-	// for(ROIWrapper roi : image.getROIs(client)) client.delete(roi);
 	public void deleteROIs(List<ImageWrapper> images) {
-		setProgress("ROIs deletion from Omero");
+		setProgress("ROIs deletion from OMERO");
 		for (ImageWrapper image : images) {
 			try {
 				List<ROIWrapper> rois = image.getROIs(client);
@@ -293,7 +299,7 @@ public class BatchRunner extends Thread {
 			if (overlay != null) {
 				ijRois.addAll(Arrays.asList(overlay.toArray()));
 			}
-			RoiManager manager = RoiManager.getInstance2();
+			RoiManager manager = RoiManager.getRoiManager();
 			ijRois.addAll(Arrays.asList(manager.getRoisAsArray()));
 			for (Roi roi : ijRois) roi.setImage(imp);
 			rois = ROIWrapper.fromImageJ(ijRois, property);
@@ -336,10 +342,20 @@ public class BatchRunner extends Thread {
 			setState("image " + (index + 1) + "/" + images.size());
 			long id = image.getId();
 			imageIds.add(id);
-			long gid = client.getCurrentGroupId();
-			client.switchGroup(gid);
-			ImagePlus imp = client.getImage(id).toImagePlus(client);
+			ImagePlus imp = image.toImagePlus(client);
 			long idocal = imp.getID();
+
+			// Load ROIs
+			if (loadROIs) {
+				RoiManager rm = RoiManager.getRoiManager();
+				rm.reset(); // Reset ROI manager to clear previous ROIs
+				List<Roi> ijRois = ROIWrapper.toImageJ(image.getROIs(client));
+				for (Roi ijRoi : ijRois) {
+					ijRoi.setImage(imp);
+					rm.addRoi(ijRoi);
+				}
+			}
+
 			// Define paths
 			String title = imp.getTitle();
 			if ((title.matches("(.*)qptiff(.*)")))
@@ -352,14 +368,16 @@ public class BatchRunner extends Thread {
 					title + /* extensionChosen + */ "_" + todayDate() +
 					".xls";
 			imp.show();
+
 			// Analyse the images.
 			IJ.runMacroFile(macroChosen, appel);
 			appel = "1";
+
 			// Save and Close the various components
 			if (savRois) {
 				// save of ROIs
-				RoiManager rm = RoiManager.getInstance2();
 				if (outputOnLocal) {  //  local save
+					RoiManager rm = RoiManager.getRoiManager();
 					rm.runCommand("Deselect"); // deselect ROIs to save them all
 					rm.runCommand("Save", dir + File.separator + title + "_" +
 										  todayDate() + "_RoiSet.zip");
@@ -379,19 +397,15 @@ public class BatchRunner extends Thread {
 					if (saveImage) { // image results expected
 						if (results) {
 							saveAndCloseWithRes(res, attach);
-							mROIS.add(getRoisFromIJ(id, imp, property));
 						} else {
 							saveAndCloseWithoutRes(res);
-							mROIS.add(getRoisFromIJ(id, imp, property));
 						}
 					} else {
 						if (results) {
 							saveResultsOnly(attach);
-							mROIS.add(getRoisFromIJ(id, imp, property));
-						} else {
-							mROIS.add(getRoisFromIJ(id, imp, property));
 						}
 					}
+					mROIS.add(getRoisFromIJ(id, imp, property));
 				}
 			} else {
 				if (saveImage) { // image results expected
@@ -411,8 +425,7 @@ public class BatchRunner extends Thread {
 			if (imp == null) {
 				imaRes = false;
 			} else {
-				int newId = imp
-						.getID(); // result image have to be selected in the end of the macro
+				int newId = imp.getID(); // result image have to be selected in the end of the macro
 				if (newId == idocal) {
 					imaRes = false;
 				}
@@ -420,6 +433,7 @@ public class BatchRunner extends Thread {
 			IJ.run("Close All"); //  To do local and Omero saves on the same time
 			pathsImages[index] = res;
 			pathsAttach[index] = attach;
+			index++;
 		}
 
 		bResults.setPathImages((Arrays.asList(pathsImages)));
@@ -505,19 +519,15 @@ public class BatchRunner extends Thread {
 					if (saveImage) {  // image results expected
 						if (results) {
 							saveAndCloseWithRes(res, attach);
-							mROIS.add(getRoisFromIJ(id, imp, property));
 						} else {
 							saveAndCloseWithoutRes(res);
-							mROIS.add(getRoisFromIJ(id, imp, property));
 						}
 					} else {
 						if (results) {
 							saveResultsOnly(attach);
-							mROIS.add(getRoisFromIJ(id, imp, property));
-						} else {
-							mROIS.add(getRoisFromIJ(id, imp, property));
 						}
 					}
+					mROIS.add(getRoisFromIJ(id, imp, property));
 				}
 			} else {
 				if (saveImage) {  // image results expected
@@ -547,6 +557,7 @@ public class BatchRunner extends Thread {
 			IJ.run("Close All"); //  To do local and Omero saves on the same time
 			pathsImages[index] = res;
 			pathsAttach[index] = attach;
+			index++;
 		}
 		bResults.setPathImages((Arrays.asList(pathsImages)));
 		bResults.setPathAttach((Arrays.asList(pathsAttach)));
@@ -601,14 +612,22 @@ public class BatchRunner extends Thread {
 	}
 
 
-	public void deleteTemp(String tmpDir) {
+	public boolean deleteTemp(String tmpDir) {
 		//""" Delete the local copy of temporary files and directory """
+		boolean deleted = true;
 		File dir = new File(tmpDir);
 		File[] entries = dir.listFiles();
-		for (File entry : entries) {
-			entry.delete();
+		if (entries != null) {
+			try {
+				for (File entry : entries) {
+					deleted &= Files.deleteIfExists(entry.toPath());
+				}
+				deleted &= Files.deleteIfExists(dir.toPath());
+			} catch (IOException e) {
+				IJ.error("Could not delete files: " + e.getMessage());
+			}
 		}
-		dir.delete();
+		return deleted;
 	}
 
 
@@ -804,6 +823,11 @@ public class BatchRunner extends Thread {
 
 	public void setOutputOnLocal(boolean outputOnLocal) {
 		this.outputOnLocal = outputOnLocal;
+	}
+
+
+	public void addListener(BatchListener listener) {
+		this.listener = listener;
 	}
 
 }
