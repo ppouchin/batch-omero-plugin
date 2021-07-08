@@ -351,16 +351,19 @@ public class BatchWindow extends JFrame implements BatchListener {
 		if (e.getStateChange() == ItemEvent.SELECTED) {
 			Object source = e.getSource();
 			if (source instanceof JComboBox<?>) {
-				int projectIdIn = ((JComboBox<?>) source).getSelectedIndex();
-				ProjectWrapper project = userProjects.get(projectIdIn);
-				this.datasets = project.getDatasets();
-				id = project.getId();
-				label.setText("ID = " + id);
-				datasets.removeAllItems();
-				for (DatasetWrapper dataset : project.getDatasets()) {
-					datasets.addItem(dataset.getName());
+				try {
+					int projectIdIn = ((JComboBox<?>) source).getSelectedIndex();
+					ProjectWrapper project = userProjects.get(projectIdIn);
+					this.datasets = project.getDatasets();
+					id = project.getId();
+					label.setText("ID = " + id);
+					datasets.removeAllItems();
+					for (DatasetWrapper dataset : project.getDatasets()) {
+						datasets.addItem(dataset.getName());
+					}
+					if (!this.datasets.isEmpty()) datasets.setSelectedIndex(0);
+				} catch (Exception a) {
 				}
-				if(!this.datasets.isEmpty()) datasets.setSelectedIndex(0);
 			}
 		}
 		return id;
@@ -372,23 +375,25 @@ public class BatchWindow extends JFrame implements BatchListener {
 			String username = (String) userList.getSelectedItem();
 			int index = userList.getSelectedIndex() - 1;
 			long userId = -1;
-			if(index >= 0) userId = users.get(index).getId();
-			userProjectsAndDatasets(username, userId);
-			projectListIn.removeAllItems();
-			projectListOutNew.removeAllItems();
-			projectListOutExist.removeAllItems();
-			datasetListIn.removeAllItems();
-			datasetListOutExist.removeAllItems();
-			for (ProjectWrapper project : userProjects) {
-				projectListIn.addItem(project.getName());
+			if (index >= 0) {
+				userId = users.get(index).getId();
+				userProjectsAndDatasets(username, userId);
+				projectListIn.removeAllItems();
+				projectListOutNew.removeAllItems();
+				projectListOutExist.removeAllItems();
+				datasetListIn.removeAllItems();
+				datasetListOutExist.removeAllItems();
+				for (ProjectWrapper project : userProjects) {
+					projectListIn.addItem(project.getName());
+				}
+				for (ProjectWrapper project : myProjects) {
+					projectListOutNew.addItem(project.getName());
+					projectListOutExist.addItem(project.getName());
+				}
+				if (!userProjects.isEmpty()) projectListIn.setSelectedIndex(0);
+				if (!myProjects.isEmpty()) projectListOutNew.setSelectedIndex(0);
+				if (!myProjects.isEmpty()) projectListOutExist.setSelectedIndex(0);
 			}
-			for (ProjectWrapper project : myProjects) {
-				projectListOutNew.addItem(project.getName());
-				projectListOutExist.addItem(project.getName());
-			}
-			if(!userProjects.isEmpty()) projectListIn.setSelectedIndex(0);
-			if(!myProjects.isEmpty()) projectListOutNew.setSelectedIndex(0);
-			if(!myProjects.isEmpty()) projectListOutExist.setSelectedIndex(0);
 		}
 	}
 

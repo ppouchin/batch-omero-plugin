@@ -113,11 +113,9 @@ public class BatchRunner extends Thread {
 		List<Long> imagesIds;
 		boolean imaRes;
 
-		System.out.print(outputOnLocal);
-		System.out.print(outputOnOMERO);
 
 		try {
-			if (!inputOnOMERO) {
+			if (!outputOnLocal) {
 				setProgress("Temporary directory creation...");
 				Path directoryOutf = Files.createTempDirectory("Fiji_analyse");
 				directoryOut = directoryOutf.toString();
@@ -162,7 +160,7 @@ public class BatchRunner extends Thread {
 				if (imaRes && saveImage) {
 					imagesIds = importImagesInDataset(pathsImages, roisL, saveROIs);
 				}
-				if (saveImage && saveROIs) {
+				if (!saveImage && saveROIs) {
 					imagesIds = importRoisInImage(imaIds, roisL);
 				}
 				if (saveResults && !saveImage && !saveROIs) {
@@ -384,6 +382,10 @@ public class BatchRunner extends Thread {
 					rm.runCommand("Deselect"); // deselect ROIs to save them all
 					rm.runCommand("Save", dir + File.separator + title + "_" +
 										  todayDate() + "_RoiSet.zip");
+				}
+				if (outputOnOMERO) { // save on Omero
+					mROIS.add(getRoisFromIJ(id, imp, property));
+				}
 					if (saveImage) {  // image results expected
 						if (results) {
 							saveAndCloseWithRes(res, attach);
@@ -395,12 +397,9 @@ public class BatchRunner extends Thread {
 							saveResultsOnly(attach);
 						}
 					}
-				}
-				if (outputOnOMERO) { // save on Omero
-					mROIS.add(getRoisFromIJ(id, imp, property));
-				}
+
 			} else {
-				if (saveImage && outputOnLocal) { // image results expected
+				if (saveImage) { // image results expected
 					if (results) {
 						saveAndCloseWithRes(res, attach);
 					} else {
@@ -412,6 +411,7 @@ public class BatchRunner extends Thread {
 					}
 				}
 			}
+
 			imp.changes = false; // Prevent "Save Changes?" dialog
 			imp = WindowManager.getCurrentImage();
 			if (imp == null) {
@@ -495,23 +495,24 @@ public class BatchRunner extends Thread {
 					rm.runCommand("Deselect"); // deselect ROIs to save them all
 					rm.runCommand("Save", dir + File.separator + title + "_" +
 										  todayDate() + "_RoiSet.zip");
-					if (saveImage) {
+				}
+				if (outputOnOMERO) {  // save on Omero
+					mROIS.add(getRoisFromIJ(id, imp, property));
+				}
+				if (saveImage) {
 						if (results) {
 							saveAndCloseWithRes(res, attach);
 						} else {
 							saveAndCloseWithoutRes(res);
 						}
-					} else {
+				} else {
 						if (results) {
 							saveResultsOnly(attach);
 						}
-					}
 				}
-				if (outputOnOMERO) {  // save on Omero
-					mROIS.add(getRoisFromIJ(id, imp, property));
-				}
+
 			} else {
-				if (saveImage && outputOnLocal) {  // image results expected
+				if (saveImage) { // image results expected
 					if (results) {
 						saveAndCloseWithRes(res, attach);
 					} else {
