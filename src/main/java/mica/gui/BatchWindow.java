@@ -17,7 +17,6 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.event.ActionEvent;
 import java.awt.event.ItemEvent;
-import java.awt.event.ItemListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
@@ -599,7 +598,7 @@ public class BatchWindow extends JFrame implements BatchListener {
 		if (!checkResults.isSelected() &&
 			!checkROIs.isSelected() &&
 			!checkImage.isSelected()) { // No query
-			errorWindow("Macro: \nYou have to choose almost one output");
+			errorWindow("Macro: \nYou have to choose at least one output");
 		} else {
 			sens = true;
 		}

@@ -297,6 +297,7 @@ public class BatchRunner extends Thread {
 			}
 
 			saveROIs(outputImageId, imp, title, property);
+			saveResults(imp, outputImageId, title, property);
 			closeWindows();
 			index++;
 		}
@@ -360,12 +361,12 @@ public class BatchRunner extends Thread {
 
 	private void saveROIs(Long imageId, ImagePlus imp, String title, String property) {
 		// save of ROIs
-		if (outputOnLocal) {  //  local save
+		if (saveROIs && outputOnLocal) {  //  local save
 			setState("Saving ROIs...");
 			rm.runCommand("Deselect"); // deselect ROIs to save them all
 			rm.runCommand("Save", directoryOut + File.separator + title + "_" + todayDate() + "_RoiSet.zip");
 		}
-		if (outputOnOMERO && imageId != null) { // save on Omero
+		if (saveROIs && outputOnOMERO && imageId != null) { // save on Omero
 			setState("Saving ROIs on OMERO...");
 			List<ROIWrapper> rois = getRoisFromIJ(imp, property);
 			try {
