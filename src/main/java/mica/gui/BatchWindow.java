@@ -8,29 +8,30 @@ import fr.igred.omero.meta.GroupWrapper;
 import fr.igred.omero.repository.DatasetWrapper;
 import fr.igred.omero.repository.ProjectWrapper;
 import ij.IJ;
-import mica.BatchData;
-import mica.BatchRunner;
-import omero.gateway.Gateway;
-import omero.gateway.SecurityContext;
+import mica.process.BatchListener;
+import mica.process.BatchRunner;
 
 import javax.swing.*;
 import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.awt.event.ItemEvent;
-import java.awt.event.ItemListener;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.File;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
 
 import static javax.swing.JOptionPane.showMessageDialog;
 
-public class BatchWindow extends JFrame {
+public class BatchWindow extends JFrame implements BatchListener {
 	private final JComboBox<String> groupList = new JComboBox<>();
 	private final JComboBox<String> userList = new JComboBox<>();
 	private final JLabel labelGroupName = new JLabel();
+	private final JButton start = new JButton("Start");
 
 	// choices of input images
 	private final JPanel panelInput = new JPanel();
@@ -39,104 +40,88 @@ public class BatchWindow extends JFrame {
 
 	private final JRadioButton omero = new JRadioButton("OMERO");
 	private final JRadioButton local = new JRadioButton("Local");
-	private final JCheckBox checkresfile_del_roi = new JCheckBox(" Clear ROIs each time ");
+	private final JCheckBox checkDelROIs = new JCheckBox(" Clear ROIs each time ");
+	private final JCheckBox checkLoadROIs = new JCheckBox(" Load ROIs ");
 
 	// choice of the dataSet
 	private final JComboBox<String> projectListIn = new JComboBox<>();
-	private final JLabel labelProjectinname = new JLabel();
 	private final JComboBox<String> datasetListIn = new JComboBox<>();
-	private final JLabel labelDatasetinname = new JLabel();
+	private final JLabel labelInputProject = new JLabel();
+	private final JLabel labelInputDataset = new JLabel();
 
 	// choice of the record
-	private final JTextField inputfolder = new JTextField(20);
-	private final JButton inputfolder_btn = new JButton("Images directory");
+	private final JTextField inputFolder = new JTextField(20);
 	private final JTextField macro = new JTextField(20);
-	private final JButton macro_btn = new JButton("Macro file");
-	private final JCheckBox checkresfile_ima = new JCheckBox(" The macro returns an image ");
-	private final JCheckBox checkresfile_res = new JCheckBox(" The macro returns a results file (other than images)");
-	private final JCheckBox checkresfile_roi = new JCheckBox(" The macro returns ROIs ");
+	private final JCheckBox checkImage = new JCheckBox(" The macro returns an image ");
+	private final JCheckBox checkResults = new JCheckBox(" The macro returns a results file (other than images)");
+	private final JCheckBox checkROIs = new JCheckBox(" The macro returns ROIs ");
 
 	// choice of output
 	private final JPanel panelOutput = new JPanel();
 	private final JPanel output1 = new JPanel();
-	private final JTextField extension = new JTextField(10);
+	private final JTextField suffix = new JTextField(10);
 
 	// Omero or local => checkbox
-	private final JCheckBox checkinline = new JCheckBox("Omero");
-	private final JCheckBox checkoutline = new JCheckBox("Local");
-
-	// OMERO
-	private final JPanel output3a = new JPanel();
-	private final JRadioButton exist = new JRadioButton("Existing dataset");
-	private final JRadioButton diff = new JRadioButton("New dataset");
+	private final JCheckBox onlineOutput = new JCheckBox("OMERO");
+	private final JCheckBox localOutput = new JCheckBox("Local");
 
 	// existing dataset
-	private final JPanel output3a1 = new JPanel();
-	private final JComboBox<String> projectListOutExist = new JComboBox<>();
-	private final JLabel labelExistprojectname = new JLabel();
-	private final JComboBox<String> datasetListOutExist = new JComboBox<>();
-	private final JLabel labelExistdatasetname = new JLabel();
-
-	// new dataSet
-	private final JPanel output3a2 = new JPanel();
-	private final JComboBox<String> projectListOutNew = new JComboBox<>();
-	private final JLabel labelNewprojectname = new JLabel();
-	private final JTextField newdataset = new JTextField(10);
+	private final JPanel output3a = new JPanel();
+	private final JComboBox<String> projectListOut = new JComboBox<>();
+	private final JComboBox<String> datasetListOut = new JComboBox<>();
+	private final JLabel labelOutputProject = new JLabel();
+	private final JLabel labelOutputDataset = new JLabel();
 
 	// local
 	private final JPanel output3b = new JPanel();
 	private final JTextField directory = new JTextField(20);
-	private final JButton directory_btn = new JButton("Output directory");
 
-	private final JButton start = new JButton("start");
-	// Ces champs peuvent être remplacés par un champ Client
-	private final Gateway gate;
 	//variables to keep
-	private BatchData data;
-	private String macro_chosen;
-	private String extension_chosen;
-	private String directory_out;
-	private String directory_in;
+	private final transient Client client;
+	private final transient List<GroupWrapper> groups;
+	private String macroChosen;
+	private String directoryOut;
+	private String directoryIn;
 	private Long outputDatasetId;
-	private Long project_id_out;
-	private String dataset_name_out;
-	private Boolean ima_res;
-	private Map<Long, ArrayList<Long>> idmap;
-	private Map<Long, String> projname;
-	private Map<Long, String> dataname;
-	private Map<String, Long> idgroup = new HashMap<>();
-	private Map<String, Long> idproj = new HashMap<>();
-	private Map<String, Long> idata = new HashMap<>();
-	private Map<String, Long> userIds;
-	private Set<String> project_ids;
-	private List MROIS;
-	private List ROISL;
-	private List<Long> ima_ids;
-	private List<Long> images_ids;
-	private SecurityContext ctx;
-	private ExperimenterWrapper exp;
+	private transient List<ProjectWrapper> groupProjects;
+	private transient List<ProjectWrapper> userProjects;
+	private transient List<DatasetWrapper> datasets;
+	private transient List<ProjectWrapper> myProjects;
+	private transient List<DatasetWrapper> myDatasets;
+	private transient List<ExperimenterWrapper> users;
+	private transient ExperimenterWrapper exp;
 
 
-	public BatchWindow(BatchData data) {
+	public BatchWindow(Client client) {
 		super("Choice of input files and output location");
+		this.client = client;
+
+		this.addWindowListener(new WindowAdapter() {
+			@Override
+			public void windowClosing(WindowEvent e) {
+				super.windowClosing(e);
+				client.disconnect();
+			}
+		});
+
+		final String projectName = "Project Name: ";
+		final String datasetName = "Dataset Name: ";
 		this.setSize(600, 700);
 		this.setLocationRelativeTo(null);
-		this.data = data;
-		Client client = data.getClient();
-		gate = client.getGateway();
+
 		try {
 			exp = client.getUser(client.getUser().getUserName());
 		} catch (ExecutionException | ServiceException | AccessException e) {
 			IJ.error(e.getCause().getMessage());
 		}
+		groups = exp.getGroups();
+		groups.removeIf(g -> g.getId() <= 2);
 
-		Map<Long, String> groupmap = myGroups(exp);
-		idgroup = hashToMap(groupmap, idgroup);
-		Set<String> groupIds = idgroup.keySet();
-		for (String groupId : groupIds) {
-			groupList.addItem(groupId);
+		for (GroupWrapper group : groups) {
+			groupList.addItem(group.getName());
 		}
-		Font namefont = new Font("Arial", Font.ITALIC, 10);
+
+		Font nameFont = new Font("Arial", Font.ITALIC, 10);
 		Container cp = this.getContentPane();
 		cp.setLayout(new BoxLayout(this.getContentPane(), BoxLayout.PAGE_AXIS));
 
@@ -144,75 +129,77 @@ public class BatchWindow extends JFrame {
 		JLabel labelGroup = new JLabel("Group Name: ");
 		group.add(labelGroup);
 		group.add(groupList);
-		groupList.addActionListener(new ComboGroupListener());
+		groupList.addItemListener(this::updateGroup);
+
 		group.add(labelGroupName);
-		labelGroupName.setFont(namefont);
+		labelGroupName.setFont(nameFont);
 		JPanel groupUsers = new JPanel();
 		JLabel labelUser = new JLabel("User Name: ");
 		groupUsers.add(labelUser);
 		groupUsers.add(userList);
-		userList.addActionListener(new ComboUserListener());
-		// choix du groupe
+		userList.addItemListener(this::updateUser);
+
+		// Group selection
 		JPanel panelGroup = new JPanel();
 		panelGroup.add(group);
 		panelGroup.add(groupUsers);
 		panelGroup.setBorder(BorderFactory.createTitledBorder("Group"));
 		cp.add(panelGroup);
 
-		//input1.setLayout(new BoxLayout(input1, BoxLayout.LINE_AXIS));
 		JPanel input1 = new JPanel();
-		JLabel labelEntertype = new JLabel("Where to get files to analyze :");
-		input1.add(labelEntertype);
+		JLabel labelEnterType = new JLabel("Where to get files to analyze :");
+		input1.add(labelEnterType);
 		input1.add(omero);
-		ButtonGroup indata = new ButtonGroup();
-		indata.add(omero);
-		omero.addItemListener(new EnterInOutListener());
+		ButtonGroup inputData = new ButtonGroup();
+		inputData.add(omero);
+		omero.addItemListener(this::updateInput);
 		input1.add(local);
-		indata.add(local);
-		local.addItemListener(new EnterInOutListener());
-		//input2a.setLayout(new BoxLayout(input2a, BoxLayout.LINE_AXIS));
-		JLabel labelProjectin = new JLabel("Project Name: ");
-		input2a.add(labelProjectin);
+		inputData.add(local);
+		local.addItemListener(this::updateInput);
+		JLabel labelProjectIn = new JLabel(projectName);
+		input2a.add(labelProjectIn);
 		input2a.add(projectListIn);
-		projectListIn.addActionListener(new ComboInListener());
-		input2a.add(labelProjectinname);
-		labelProjectinname.setFont(namefont);
-		JLabel labelDatasetin = new JLabel("Dataset Name: ");
-		input2a.add(labelDatasetin);
+		projectListIn.addItemListener(this::updateInputProject);
+		input2a.add(labelInputProject);
+		labelInputProject.setFont(nameFont);
+		JLabel labelDatasetIn = new JLabel(datasetName);
+		input2a.add(labelDatasetIn);
 		input2a.add(datasetListIn);
-		datasetListIn.addActionListener(new ComboDataInListener());
-		input2a.add(labelDatasetinname);
-		labelDatasetinname.setFont(namefont);
-		JCheckBox checkresfile_load_roi = new JCheckBox(" Load ROIs ");
-		input2a.add(checkresfile_load_roi);
-		input2a.add(checkresfile_del_roi);
+		datasetListIn.addItemListener(this::updateInputDataset);
+		input2a.add(labelInputDataset);
+		labelInputDataset.setFont(nameFont);
+		input2a.add(checkLoadROIs);
+		input2a.add(checkDelROIs);
 
-		//input2b.setLayout(new BoxLayout(input2b, BoxLayout.LINE_AXIS));
-		input2b.add(inputfolder);
-		inputfolder.setMaximumSize(new Dimension(300, 30));
-		input2b.add(inputfolder_btn);
-		inputfolder_btn.addActionListener(new BoutonInputFolderListener());
+		input2b.add(inputFolder);
+		inputFolder.setMaximumSize(new Dimension(300, 30));
+		JButton inputFolderBtn = new JButton("Images directory");
+		input2b.add(inputFolderBtn);
+		inputFolderBtn.addActionListener(e -> chooseDirectory(inputFolder));
 		panelInput.add(input1);
 		omero.setSelected(true);
 		panelInput.setLayout(new BoxLayout(panelInput, BoxLayout.PAGE_AXIS));
 		panelInput.setBorder(BorderFactory.createTitledBorder("Input"));
 		cp.add(panelInput);
 
-		//macro1.setLayout(new BoxLayout(macro1, BoxLayout.LINE_AXIS));
 		JPanel macro1 = new JPanel();
 		macro1.add(macro);
 		macro.setMaximumSize(new Dimension(300, 30));
-		macro1.add(macro_btn);
-		macro_btn.addActionListener(new BoutonMacroListener());
+		JButton macroBtn = new JButton("Macro file");
+		macro1.add(macroBtn);
+		macroBtn.addActionListener(e -> chooseMacro());
 		JPanel macro2 = new JPanel();
 		macro2.setLayout(new BoxLayout(macro2, BoxLayout.LINE_AXIS));
-		macro2.add(checkresfile_ima);
+		checkImage.addItemListener(this::updateOutput);
+		macro2.add(checkImage);
 		JPanel macro3 = new JPanel();
 		macro3.setLayout(new BoxLayout(macro3, BoxLayout.LINE_AXIS));
-		macro3.add(checkresfile_res);
+		checkResults.addItemListener(this::updateOutput);
+		macro3.add(checkResults);
 		JPanel macro4 = new JPanel();
 		macro4.setLayout(new BoxLayout(macro4, BoxLayout.LINE_AXIS));
-		macro4.add(checkresfile_roi);
+		checkROIs.addItemListener(this::updateOutput);
+		macro4.add(checkROIs);
 		//choice of the macro
 		JPanel panelMacro = new JPanel();
 		panelMacro.add(macro1);
@@ -223,64 +210,40 @@ public class BatchWindow extends JFrame {
 		panelMacro.setBorder(BorderFactory.createTitledBorder("Macro"));
 		cp.add(panelMacro);
 
-		//output1.setLayout(new BoxLayout(output1, BoxLayout.LINE_AXIS));
 		JLabel labelExtension = new JLabel("Suffix of output files :");
 		output1.add(labelExtension);
-		output1.add(extension);
-		extension
-				.setText("_macro"); //extension.setMaximumSize(new Dimension(300, 30));
+		output1.add(suffix);
+		suffix.setText("_macro");
 
-		//output2.setLayout(new BoxLayout(output2, BoxLayout.LINE_AXIS));
 		JPanel output2 = new JPanel();
-		JLabel labelRecordoption = new JLabel("Where to save results :");
-		output2.add(labelRecordoption);
-		output2.add(checkinline);
-		checkinline.addItemListener(new CheckInOutListener());
-		output2.add(checkoutline);
-		checkoutline.addItemListener(new CheckInOutListener());
-		//
-		//output3a.setLayout(new BoxLayout(output3a, BoxLayout.LINE_AXIS));
-		JLabel labelOutdata = new JLabel("Choose an output dataset :");
-		output3a.add(labelOutdata);
-		output3a.add(exist);
-		ButtonGroup outdata = new ButtonGroup();
-		outdata.add(exist);
-		exist.addItemListener(new CheckInOutListener());
-		exist.setSelected(true);
-		output3a.add(diff);
-		outdata.add(diff);
-		diff.addItemListener(new CheckInOutListener());
-		// exist
-		//output3a1.setLayout(new BoxLayout(output3a1, BoxLayout.LINE_AXIS));
-		JLabel labelExistproject = new JLabel("Project Name: ");
-		output3a1.add(labelExistproject);
-		output3a1.add(projectListOutExist);
-		projectListOutExist.addActionListener(new ComboOutExistListener());
-		output3a1.add(labelExistprojectname);
-		labelExistprojectname.setFont(namefont);
-		JLabel labelExistdataset = new JLabel("Dataset Name: ");
-		output3a1.add(labelExistdataset);
-		output3a1.add(datasetListOutExist);
-		datasetListOutExist.addActionListener(new ComboDataOutExistListener());
-		output3a1.add(labelExistdatasetname);
-		labelExistdatasetname.setFont(namefont);
-		// diff
-		//output3a2.setLayout(new BoxLayout(output3a2, BoxLayout.LINE_AXIS));
-		JLabel labelNewproject = new JLabel("Project Name: ");
-		output3a2.add(labelNewproject);
-		output3a2.add(projectListOutNew);
-		projectListOutNew.addActionListener(new ComboOutNewListener());
-		output3a2.add(labelNewprojectname);
-		labelNewprojectname.setFont(namefont);
-		JLabel labelNewdataset = new JLabel("Dataset Name: ");
-		output3a2.add(labelNewdataset);
-		output3a2.add(newdataset);
-		//
-		//output3b.setLayout(new BoxLayout(output3b, BoxLayout.LINE_AXIS));
+		JLabel labelRecordOption = new JLabel("Where to save results :");
+		output2.add(labelRecordOption);
+		output2.add(onlineOutput);
+		onlineOutput.addItemListener(this::updateOutput);
+		output2.add(localOutput);
+		localOutput.addItemListener(this::updateOutput);
+
+		output3a.add(labelOutputProject);
+		output3a.add(projectListOut);
+		projectListOut.addItemListener(this::updateOutputProject);
+		JLabel labelExistProjectName = new JLabel();
+		output3a.add(labelExistProjectName);
+		labelExistProjectName.setFont(nameFont);
+		output3a.add(labelOutputDataset);
+		output3a.add(datasetListOut);
+		datasetListOut.addItemListener(this::updateOutputDataset);
+		JLabel labelExistDatasetName = new JLabel();
+		output3a.add(labelExistDatasetName);
+		labelExistDatasetName.setFont(nameFont);
+		JButton newDataset = new JButton("New");
+		newDataset.addActionListener(this::createNewDataset);
+		output3a.add(newDataset);
+
 		output3b.add(directory);
 		directory.setMaximumSize(new Dimension(300, 30));
-		output3b.add(directory_btn);
-		directory_btn.addActionListener(new BoutonDirectoryListener());
+		JButton directoryBtn = new JButton("Output directory");
+		output3b.add(directoryBtn);
+		directoryBtn.addActionListener(e -> chooseDirectory(directory));
 		//
 		panelOutput.add(output2);
 		panelOutput.setLayout(new BoxLayout(panelOutput, BoxLayout.PAGE_AXIS));
@@ -290,21 +253,23 @@ public class BatchWindow extends JFrame {
 		// validation button
 		JPanel panelBtn = new JPanel();
 		panelBtn.add(start);
-		start.addActionListener(new BoutonValiderDataListener());
+		start.addActionListener(this::start);
 		cp.add(panelBtn);
+
+		long groupId = client.getCurrentGroupId();
+		int index;
+		for (index = 0; index < groups.size(); index++) {
+			if (groups.get(index).getId() == groupId) break;
+		}
+		groupList.setSelectedIndex(-1);
+		groupList.setSelectedIndex(index);
 
 		this.setVisible(true);
 	}
 
 
-	// Transform a LinkedHashMap in Map where keys are names and values are ids
-	public Map<String, Long> hashToMap(Map<Long, String> hash,
-									   Map<String, Long> M) {
-		Set<Long> cles = hash.keySet();
-		for (Long cle : cles) {
-			M.put(hash.get(cle), cle);
-		}
-		return M;
+	private String idLabel(long id) {
+		return String.format("ID = %d", id);
 	}
 
 
@@ -318,424 +283,419 @@ public class BatchWindow extends JFrame {
 	}
 
 
-	public Map<Long, String> myGroups(ExperimenterWrapper experimenter) {
-		List<GroupWrapper> groups = experimenter.getGroups();
-		Map<Long, String> groupmap = new LinkedHashMap<>();
-		for (GroupWrapper group : groups) {
-			long groupId = group.getGroupId();
-			String groupName = group.getName();
-			if (groupId != 1) { // exclude the "user" group
-				groupmap.put(groupId, groupName);
-			}
+	public void userProjectsAndDatasets(String username, long userId) {
+		if (username.equals("All members")) {
+			userProjects = groupProjects;
+		} else {
+			userProjects = groupProjects.stream()
+										.filter(project -> project.getOwner().getId() == userId)
+										.collect(Collectors.toList());
 		}
-		return groupmap;
+		myProjects = groupProjects.stream()
+								  .filter(project -> project.getOwner().getId() == exp.getId())
+								  .collect(Collectors.toList());
 	}
 
 
-	public List userProjectsAndDatasets(String username,
-										Map<String, Long> userId) {
-		Client client = data.getClient();
-		List<ProjectWrapper> projects = new ArrayList<>();
+	private void updateInputDataset(ItemEvent e) {
+		if (e.getStateChange() == ItemEvent.SELECTED) {
+			Object source = e.getSource();
+			if (source instanceof JComboBox<?>) {
+				int datasetId = ((JComboBox<?>) source).getSelectedIndex();
+				DatasetWrapper dataset = datasets.get(datasetId);
+				labelInputDataset.setText(idLabel(dataset.getId()));
+			}
+		}
+	}
+
+
+	private void updateInputProject(ItemEvent e) {
+		if (e.getStateChange() == ItemEvent.SELECTED) {
+			Object source = e.getSource();
+			if (source instanceof JComboBox<?>) {
+				int index = ((JComboBox<?>) source).getSelectedIndex();
+				ProjectWrapper project = userProjects.get(index);
+				this.datasets = project.getDatasets();
+				labelInputProject.setText(idLabel(project.getId()));
+				datasetListIn.removeAllItems();
+				for (DatasetWrapper dataset : project.getDatasets()) {
+					datasetListIn.addItem(dataset.getName());
+				}
+				if (!this.datasets.isEmpty()) datasetListIn.setSelectedIndex(0);
+			}
+		}
+	}
+
+
+	private void updateOutputDataset(ItemEvent e) {
+		if (e.getStateChange() == ItemEvent.SELECTED) {
+			Object source = e.getSource();
+			if (source instanceof JComboBox<?>) {
+				int datasetId = ((JComboBox<?>) source).getSelectedIndex();
+				DatasetWrapper dataset = myDatasets.get(datasetId);
+				labelOutputDataset.setText(idLabel(dataset.getId()));
+			}
+		}
+	}
+
+
+	private void updateOutputProject(ItemEvent e) {
+		if (e.getStateChange() == ItemEvent.SELECTED) {
+			Object source = e.getSource();
+			if (source instanceof JComboBox<?>) {
+				int index = ((JComboBox<?>) source).getSelectedIndex();
+				ProjectWrapper project = myProjects.get(index);
+				this.myDatasets = project.getDatasets();
+				labelOutputProject.setText(idLabel(project.getId()));
+				datasetListOut.removeAllItems();
+				for (DatasetWrapper dataset : project.getDatasets()) {
+					datasetListOut.addItem(dataset.getName());
+				}
+				if (!this.datasets.isEmpty()) datasetListOut.setSelectedIndex(0);
+			}
+		}
+	}
+
+
+	private void createNewDataset(ActionEvent e) {
+		int index = projectListOut.getSelectedIndex();
+		ProjectWrapper project = myProjects.get(index);
+		long id = -1;
+		String name = (String) JOptionPane.showInputDialog(this,
+														   "New dataset name:",
+														   "Create a new dataset",
+														   JOptionPane.QUESTION_MESSAGE,
+														   null,
+														   null,
+														   null);
+		if (name == null) return;
 		try {
-			projects = client.getProjects();
-		} catch (ServiceException | AccessException exception) {
-			IJ.log(exception.getMessage());
+			DatasetWrapper newDataset = project.addDataset(client, name, "");
+			id = newDataset.getId();
+		} catch (ExecutionException | ServiceException | AccessException exception) {
+			warningWindow("Could not create dataset: " + exception.getMessage());
 		}
-
-		Map<Long, ArrayList<Long>> idmap = new HashMap<>();
-		Map<Long, String> projname = new HashMap<>();
-		Map<Long, String> dataname = new HashMap<>();
-
-		if (!username.equals("All members")) {
-			projects.removeIf(project -> project.getOwner().getId() !=
-										 userId.get(username));
-		}
-
-		for (ProjectWrapper project : projects) {
-			Long projectId = project.getId();
-			idmap.put(projectId, new ArrayList<>());
-			String projectName = project.getName();
-			projname.put(projectId, projectName);
-			List<DatasetWrapper> datasets = project.getDatasets();
-			for (DatasetWrapper dataset : datasets) {
-				Long datasetId = dataset.getId();
-				String datasetName = dataset.getName();
-				idmap.get(projectId).add(datasetId);
-				dataname.put(datasetId, datasetName);
+		projectListOut.setSelectedIndex(-1);
+		projectListOut.setSelectedIndex(index);
+		for (int i = 0; i < myDatasets.size(); i++) {
+			if (myDatasets.get(i).getId() == id) {
+				datasetListOut.setSelectedIndex(i);
+				break;
 			}
 		}
-		return new ArrayList<>(Arrays.asList(idmap, projname, dataname));
 	}
 
 
-	class ComboGroupListener implements ActionListener {
-		public void actionPerformed(ActionEvent e) {
-			Client client = data.getClient();
-			String groupName = (String) groupList.getSelectedItem();
-			labelGroupName.setText("ID = " + idgroup.get(groupName));
-			List<ExperimenterWrapper> members = new ArrayList<>();
+	private void updateUser(ItemEvent e) {
+		if (e.getStateChange() == ItemEvent.SELECTED) {
+			int index = userList.getSelectedIndex();
+			String username = userList.getItemAt(index);
+			long userId = -1;
+			if (index >= 1) userId = users.get(index - 1).getId();
+			userProjectsAndDatasets(username, userId);
+			projectListIn.removeAllItems();
+			projectListOut.removeAllItems();
+			datasetListIn.removeAllItems();
+			datasetListOut.removeAllItems();
+			for (ProjectWrapper project : userProjects) {
+				projectListIn.addItem(project.getName());
+			}
+			for (ProjectWrapper project : myProjects) {
+				projectListOut.addItem(project.getName());
+			}
+			if (!userProjects.isEmpty()) projectListIn.setSelectedIndex(0);
+			if (!myProjects.isEmpty()) projectListOut.setSelectedIndex(0);
+		}
+	}
+
+
+	private void updateGroup(ItemEvent e) {
+		if (e.getStateChange() == ItemEvent.SELECTED) {
+			int index = groupList.getSelectedIndex();
+			long id = groups.get(index).getId();
+			String groupName = groups.get(index).getName();
+			client.switchGroup(id);
+
+			groupProjects = new ArrayList<>();
 			try {
-				GroupWrapper fullGroup = client.getGroup(groupName);
-				members = fullGroup.getExperimenters();
+				groupProjects = client.getProjects();
+			} catch (ServiceException | AccessException exception) {
+				IJ.log(exception.getMessage());
+			}
+
+			labelGroupName.setText(idLabel(id));
+			try {
+				GroupWrapper group = client.getGroup(groupName);
+				users = group.getExperimenters();
 			} catch (ExecutionException | ServiceException | AccessException exception) {
 				IJ.log(exception.getMessage());
 			}
-			userIds = new HashMap<>();
 			userList.removeAllItems();
+
 			userList.addItem("All members");
-			for (ExperimenterWrapper member : members) {
-				userList.addItem(member.getUserName());
-				userIds.put(member.getUserName(), member.getId());
-			}
-		}
-
-	}
-
-	class ComboUserListener implements ActionListener {
-		public void actionPerformed(ActionEvent e) {
-			String username = (String) userList.getSelectedItem();
-			List maps = userProjectsAndDatasets(username, userIds);
-			idmap = (Map<Long, ArrayList<Long>>) maps.get(0);
-			projname = (Map<Long, String>) maps.get(1);
-			idproj = hashToMap(projname, idproj);
-			dataname = (Map<Long, String>) maps.get(2);
-			idata = hashToMap(dataname, idata);
-			project_ids = idproj.keySet();
-			projectListIn.removeAllItems();
-			projectListOutNew.removeAllItems();
-			projectListOutExist.removeAllItems();
-			for (String project_id : project_ids) {
-				projectListIn.addItem(project_id);
-				projectListOutNew.addItem(project_id);
-				projectListOutExist.addItem(project_id);
-			}
-		}
-
-	}
-
-	class EnterInOutListener implements ItemListener {
-		public void itemStateChanged(ItemEvent e) {
-			if (omero.isSelected()) {
-				panelInput.add(input2a);
-				panelInput.remove(input2b);
-				data.setInputOnOMERO(true);
-			} else { //local.isSelected()
-				panelInput.add(input2b);
-				panelInput.remove(input2a);
-				data.setInputOnOMERO(false);
-			}
-			BatchWindow.this.setVisible(true);
-		}
-
-	}
-
-	class ComboInListener implements ActionListener {
-		public void actionPerformed(ActionEvent e) {
-			int index = Math.max(0, projectListIn.getSelectedIndex());
-			String projectIdIn = projectListIn.getItemAt(index);
-			labelProjectinname.setText("ID = " + idproj.get(projectIdIn));
-			datasetListIn.removeAllItems();
-			for (Long datasetId : idmap.get(idproj.get(projectIdIn))) {
-				datasetListIn.addItem(dataname.get(datasetId));
-			}
-		}
-
-	}
-
-	class ComboDataInListener implements ActionListener {
-		public void actionPerformed(ActionEvent e) {
-			String dataset_id_in = (String) datasetListIn.getSelectedItem();
-			labelDatasetinname.setText(
-					"ID = " + idata.get(dataset_id_in));
-		}
-
-	}
-
-	class ComboOutExistListener implements ActionListener {
-		public void actionPerformed(ActionEvent e) {
-			int index = Math.max(0, projectListOutExist.getSelectedIndex());
-			String project_id_out = projectListOutExist.getItemAt(index);
-			labelExistprojectname.setText("ID = " + idproj.get(project_id_out));
-			datasetListOutExist.removeAllItems();
-			for (Long dataset_id : idmap.get(idproj.get(project_id_out))) {
-				datasetListOutExist.addItem(dataname.get(dataset_id));
-			}
-		}
-
-	}
-
-	class ComboDataOutExistListener implements ActionListener {
-		public void actionPerformed(ActionEvent e) {
-			String dataset_id_out = (String) datasetListOutExist
-					.getSelectedItem();
-			labelExistdatasetname.setText(
-					"ID = " + idata.get(dataset_id_out));
-		}
-
-	}
-
-	class ComboOutNewListener implements ActionListener {
-		public void actionPerformed(ActionEvent e) {
-			String project_id_out = (String) projectListOutNew
-					.getSelectedItem();
-			labelNewprojectname.setText(
-					"ID = " + idproj.get(project_id_out));
-		}
-
-	}
-
-	class BoutonInputFolderListener implements ActionListener {
-		public void actionPerformed(ActionEvent e) {
-			JFileChooser inputchoice = new JFileChooser();
-			inputchoice.setDialogTitle("Choose the input directory");
-			inputchoice.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-			int returnVal = inputchoice.showOpenDialog(null);
-			if (returnVal == JFileChooser.APPROVE_OPTION) {
-				File absindir = new File(inputchoice.getSelectedFile()
-													.getAbsolutePath());
-				// verify if record exist (handwritten case)
-				if (absindir.exists() && absindir.isDirectory()) {
-					inputfolder.setText(absindir.toString());
-				} else {
-					//find a way to prevent JFileChooser closure?
-					errorWindow("Input: \nThe directory doesn't exist"); // new JOptionPane(inputchoice);
+			int selected = 0;
+			for (ExperimenterWrapper user : users) {
+				userList.addItem(user.getUserName());
+				if (user.getId() == exp.getId()) {
+					selected = users.indexOf(user) + 1;
 				}
 			}
-			if (returnVal == JFileChooser.CANCEL_OPTION &&
-				inputfolder.getText() == "") {
-				// warn user if macro selection canceled without any previous choice
-				warningWindow("Input: \nNo directory selected");
-			}
+			userList.setSelectedIndex(selected);
 		}
-
 	}
 
-	class BoutonMacroListener implements ActionListener {
-		public void actionPerformed(ActionEvent e) {
-			JFileChooser macrochoice = new JFileChooser();
-			macrochoice.setDialogTitle("Choose the macro file");
-			macrochoice.setFileSelectionMode(JFileChooser.FILES_ONLY);
-			int returnVal = macrochoice.showOpenDialog(null);
-			if (returnVal == JFileChooser.APPROVE_OPTION) {
-				File absfile = new File(macrochoice.getSelectedFile()
-												   .getAbsolutePath());
-				if (absfile.exists() && !absfile.isDirectory()) {
-					macro.setText(absfile.toString());
-				} else {
-					//find a way to prevent JFileChooser closure?
-					warningWindow("Macro: \nThe file doesn't exist"); //new JOptionPane(macrochoice);
-				}
-			}
-			if (returnVal == JFileChooser.CANCEL_OPTION &&
-				macro.getText() == "") {
-				// warn user if macro selection canceled without any previous choice
-				warningWindow("Macro: \nNo macro selected");
-			}
-		}
 
+	private void updateInput(ItemEvent e) {
+		if (omero.isSelected()) {
+			panelInput.add(input2a);
+			panelInput.remove(input2b);
+		} else { //local.isSelected()
+			panelInput.add(input2b);
+			panelInput.remove(input2a);
+		}
+		BatchWindow.this.setVisible(true);
 	}
 
-	class BoutonDirectoryListener implements ActionListener {
-		public void actionPerformed(ActionEvent e) {
-			JFileChooser outputchoice = new JFileChooser();
-			outputchoice.setDialogTitle("Choose the output directory");
-			outputchoice.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-			int returnVal = outputchoice.showOpenDialog(null);
-			outputchoice.setAcceptAllFileFilterUsed(false); // ????
-			if (returnVal == JFileChooser.APPROVE_OPTION) {
-				File absdir = new File(outputchoice.getSelectedFile()
-												   .getAbsolutePath());
-				if (absdir.exists() && absdir.isDirectory()) {
-					directory.setText(absdir.toString());
-				} else {
-					////find a way to prevent JFileChooser closure?
-					errorWindow("Output: \nThe directory doesn't exist");
-				}
-			}
-			if (returnVal == JFileChooser.CANCEL_OPTION &&
-				directory.getText() == "") {
-				warningWindow("Output: \nNo directory selected");
-			}
-		}
 
-	}
-
-	class CheckInOutListener implements ItemListener {
-		public void itemStateChanged(ItemEvent e) {
-			if (checkresfile_ima.isSelected()) {
-				panelOutput.remove(output3b);
-				panelOutput.add(output1);
-				if (checkinline.isSelected()) {
-					panelOutput.add(output3a);
-					if (diff.isSelected()) {
-						panelOutput.add(output3a2);
-						panelOutput.remove(output3a1);
-					} else if (exist.isSelected()) {
-						panelOutput.add(output3a1);
-						panelOutput.remove(output3a2);
-					}
-				} else {
-					panelOutput.remove(output3a);
-					panelOutput.remove(output3a1);
-					panelOutput.remove(output3a2);
-				}
-				if (checkoutline.isSelected()) {
-					panelOutput.add(output3b);
-				} else {
-					panelOutput.remove(output3b);
-				}
+	private void chooseDirectory(JTextField textField) {
+		JFileChooser outputChoice = new JFileChooser();
+		outputChoice.setDialogTitle("Choose the directory");
+		outputChoice.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+		int returnVal = outputChoice.showOpenDialog(null);
+		outputChoice.setAcceptAllFileFilterUsed(false); // ????
+		if (returnVal == JFileChooser.APPROVE_OPTION) {
+			File absDir = new File(outputChoice.getSelectedFile()
+											   .getAbsolutePath());
+			if (absDir.exists() && absDir.isDirectory()) {
+				textField.setText(absDir.toString());
 			} else {
-				panelOutput.remove(output1);
-				panelOutput.remove(output3a1);
+				////find a way to prevent JFileChooser closure?
+				errorWindow(String.format("Output:%nThe directory doesn't exist"));
+			}
+		}
+	}
+
+
+	private void chooseMacro() {
+		JFileChooser macroChoice = new JFileChooser();
+		macroChoice.setDialogTitle("Choose the macro file");
+		macroChoice.setFileSelectionMode(JFileChooser.FILES_ONLY);
+		int returnVal = macroChoice.showOpenDialog(null);
+		if (returnVal == JFileChooser.APPROVE_OPTION) {
+			File absFile = new File(macroChoice.getSelectedFile().getAbsolutePath());
+			if (absFile.exists() && !absFile.isDirectory()) {
+				macro.setText(absFile.toString());
+			} else {
+				//find a way to prevent JFileChooser closure?
+				warningWindow(String.format("Macro:%nThe file doesn't exist"));
+			}
+		}
+	}
+
+
+	@Override
+	public void onThreadFinished() {
+		start.setEnabled(true);
+	}
+
+
+	public void start(ActionEvent e) {
+		ProgressDialog progress = new ProgressDialog();
+		BatchRunner runner = new BatchRunner(client, progress);
+		runner.addListener(this);
+
+		// initiation of success variables
+		boolean checkInput;
+		boolean checkMacro = getMacro();
+		boolean checkOutput = getOutput();
+
+		// input data
+		if (omero.isSelected()) {
+			runner.setInputOnOMERO(true);
+			int index = datasetListIn.getSelectedIndex();
+			DatasetWrapper dataset = datasets.get(index);
+			long inputDatasetId = dataset.getId();
+			runner.setInputDatasetId(inputDatasetId);
+			runner.setOutputDatasetId(inputDatasetId);
+			checkInput = true;
+		} else { // local.isSelected()
+			runner.setInputOnOMERO(false);
+			checkInput = getLocalInput();
+		}
+
+		// suffix
+		runner.setSuffix(suffix.getText());
+
+		if (checkInput && checkMacro && checkOutput) {
+			runner.setLoadROIS(checkLoadROIs.isSelected());
+			runner.setClearROIS(checkDelROIs.isSelected());
+			runner.setSaveImage(checkImage.isSelected());
+			runner.setSaveResults(checkResults.isSelected());
+			runner.setSaveROIs(checkROIs.isSelected());
+			if (onlineOutput.isSelected()) {
+				runner.setOutputOnOMERO(true);
+				if (checkImage.isSelected()) {
+					runner.setOutputDatasetId(outputDatasetId);
+				}
+			}
+			if (localOutput.isSelected()) {
+				runner.setOutputOnLocal(true);
+				runner.setDirectoryIn(directoryIn);
+				runner.setDirectoryOut(directoryOut);
+			}
+
+			runner.setMacro(macroChosen);
+			start.setEnabled(false);
+			try {
+				runner.start();
+			} catch (Exception exception) {
+				errorWindow(exception.getMessage());
+			}
+		}
+	}
+
+
+	private void updateOutput(ItemEvent e) {
+		if (checkImage.isSelected()) {
+			panelOutput.remove(output3b);
+			panelOutput.add(output1);
+			if (onlineOutput.isSelected()) {
+				panelOutput.add(output3a);
+			} else {
 				panelOutput.remove(output3a);
-				panelOutput.remove(output3a1);
-				panelOutput.remove(output3a2);
-				panelOutput.remove(output3b);
-				if (checkoutline.isSelected()) {
-					panelOutput.add(output3b);
-				} else {
-					panelOutput.remove(output3b);
-				}
 			}
-			BatchWindow.this.setVisible(true);
+		} else {
+			panelOutput.remove(output1);
+			panelOutput.remove(output3a);
+			panelOutput.remove(output3b);
 		}
-
+		if (localOutput.isSelected()) {
+			panelOutput.add(output3b);
+		} else {
+			panelOutput.remove(output3b);
+		}
+		this.setVisible(true);
 	}
 
-	class BoutonValiderDataListener implements ActionListener {
-		public void actionPerformed(ActionEvent e) {
 
-			// initiation of success variables
-			Boolean inputdata = null;
-			Boolean macrodata = null;
-			Boolean omerorecord = null;
-			Boolean localrecord = null;
-			Boolean recordtype = null;
-			Boolean sens = null;
-
-			// input data
-			if (omero.isSelected()) {
-				String inputDatasetId = (String) datasetListIn.getSelectedItem();
-				if (inputDatasetId == null) {
-					errorWindow("Input: \nNo dataset selected");
-				} else {
-					data.setInputDatasetId(idata.get(inputDatasetId));
-					inputdata = true;
-				}
-			} else { // local.isSelected()
-				if (inputfolder.getText().equals("")) {
-					errorWindow("Input: \nNo directory selected");
-				} else {
-					directory_in = inputfolder.getText();
-					File directory_inf = new File(directory_in);
-					if (directory_inf.exists() && directory_inf.isDirectory()) {
-						inputdata = true;
-					} else {
-						errorWindow("Input: \nThe directory " + directory_in +
-									" doesn't exist");
-					}
-				}
-			}
-
-			// macro file (mandatory)
-			if (macro.getText().equals("")) {
-				errorWindow("Macro: \nNo macro selected");
+	private boolean getLocalInput() {
+		boolean check = false;
+		if (inputFolder.getText().equals("")) {
+			errorWindow(String.format("Input:%nNo directory selected"));
+		} else {
+			directoryIn = inputFolder.getText();
+			File directoryInF = new File(directoryIn);
+			if (directoryInF.exists() && directoryInF.isDirectory()) {
+				check = true;
 			} else {
-				macro_chosen = macro.getText();
-				File macrof = new File(macro_chosen);
-				if (macrof.exists() && !macrof.isDirectory()) {
-					macrodata = true;
-				} else {
-					errorWindow("Macro: \nThe file " + macro_chosen +
-								" doesn't exist");
-				}
+				String msg = String.format("Input:%n The directory %s does not exist", directoryIn);
+				errorWindow(msg);
 			}
+		}
+		return check;
+	}
 
-			// suffix
-			extension_chosen = extension.getText();
 
-			// record type
-			if (checkinline.isSelected()) { // inline record
-				if (exist.isSelected()) { // existing dataset
-					outputDatasetId = idata
-							.get(datasetListOutExist.getSelectedItem());
-					if (outputDatasetId == null) {
-						errorWindow("Output: \nNo dataset selected");
-						omerorecord = false;
-					} else {
-						omerorecord = true;
-					}
-				} else { // new dataset
-					project_id_out = idproj
-							.get(projectListOutNew.getSelectedItem());
-					dataset_name_out = newdataset.getText();
-					if (project_id_out == null || dataset_name_out == "") {
-						errorWindow("Output: \nNo project selected or name written");
-						omerorecord = false;
-					} else {
-						omerorecord = true;
-					}
-				}
-			}
-			if (checkoutline.isSelected()) { // local record
-				if (directory.getText() == "") {
-					errorWindow("Output: \nNo directory selected");
-					localrecord = false;
-				} else {
-					directory_out = directory.getText();
-					File directory_outf = new File(directory_out);
-					if (directory_outf.exists() &&
-						directory_outf.isDirectory()) {
-						localrecord = true;
-					} else {
-						errorWindow("Output: \nThe directory " + directory_out +
-									" doesn't exist");
-						localrecord = false;
-					}
-				}
-			}
-
-			if (!checkinline.isSelected() && !checkoutline
-					.isSelected()) { // omerorecord == null && localrecord = null
-				errorWindow("Output: \nYou have to choose the localisation to save the results");
-			} else if ((omerorecord || omerorecord == null) &&
-					   (localrecord || localrecord ==
-									   null)) { // true means selected and ok, null means not selected, false means selected but pb
-				recordtype = true;
-			}
-
-			if (!checkresfile_res.isSelected() &&
-				!checkresfile_roi.isSelected() &&
-				!checkresfile_ima.isSelected()) { // No query
-				errorWindow("Macro: \nYou have to choose almost one output");
+	private boolean getMacro() {
+		boolean check = false;
+		// macro file (mandatory)
+		if (macro.getText().equals("")) {
+			errorWindow(String.format("Macro:%nNo macro selected"));
+		} else {
+			macroChosen = macro.getText();
+			File macroFile = new File(macroChosen);
+			if (macroFile.exists() && !macroFile.isDirectory()) {
+				check = true;
 			} else {
-				sens = true;
+				String msg = String.format("Macro:%n The file %s does not exist", macroChosen);
+				errorWindow(msg);
 			}
+		}
+		return check;
+	}
 
-			if (local.isSelected() && checkinline.isSelected() &&
-				!checkresfile_ima.isSelected()) { // Impossible to upload
-				errorWindow("Output: \nYou can't upload results file or ROIs on OMERO if your image isn't in OMERO");
-				sens = false;
+
+	private boolean getOMEROOutput() {
+		boolean check = false;
+		if (onlineOutput.isSelected()) {
+			int index = datasetListOut.getSelectedIndex();
+			if (index == -1 || index > datasets.size()) {
+				errorWindow(String.format("Output:%nNo dataset selected"));
 			} else {
-				sens = true;
+				check = true;
+				DatasetWrapper dataset = datasets.get(index);
+				outputDatasetId = dataset.getId();
 			}
+		}
+		return check;
+	}
 
-			//
-			if (inputdata && macrodata && recordtype && sens) {
-				try {
-					data.setSaveResults(checkresfile_res.isSelected());
-					data.setSaveROIs(checkresfile_roi.isSelected());
-					data.setOutputDatasetId(outputDatasetId);
-					ProcessingDialog processingDialog = new ProcessingDialog();
-					BatchRunner progress = new BatchRunner(data, processingDialog);
-					progress.start();
-				} catch (Exception e2) {
-					errorWindow(e2.getMessage());
+
+	private boolean getLocalOutput() {
+		boolean check = false;
+		if (localOutput.isSelected()) {
+			if (directory.getText().equals("")) {
+				errorWindow(String.format("Output:%nNo directory selected"));
+			} else {
+				directoryOut = directory.getText();
+				File directoryOutFile = new File(directoryOut);
+				if (directoryOutFile.exists() && directoryOutFile.isDirectory()) {
+					check = true;
+				} else {
+					String msg = String.format("Output:%n The directory %s does not exist", directoryOut);
+					errorWindow(msg);
 				}
 			}
+		}
+		return check;
+	}
 
+
+	private boolean checkDeleteROIs() {
+		boolean check = true;
+		if (checkDelROIs.isSelected() && (!onlineOutput.isSelected() || !checkROIs.isSelected())) {
+			errorWindow(String.format("ROIs:%nYou can't clear ROIs if you don't save ROIs on OMERO"));
+			check = false;
+		}
+		return check;
+	}
+
+
+	private boolean checkUploadLocalInput() {
+		boolean check = true;
+		if (local.isSelected() && onlineOutput.isSelected() && !checkImage.isSelected()) {
+			errorWindow(String.format("Output:%nYou can't upload results file or ROIs on OMERO if your image isn't in OMERO"));
+			check = false;
+		}
+		return check;
+	}
+
+
+	private boolean checkSelectedOutput() {
+		boolean check = true;
+		if (!checkResults.isSelected() && !checkROIs.isSelected() && !checkImage.isSelected()) {
+			errorWindow(String.format("Macro:%nYou have to choose at least one output"));
+			check = false;
+		}
+		return check;
+	}
+
+
+	private boolean getOutput() {
+		boolean omeroCheck = getOMEROOutput();
+		boolean localCheck = getLocalOutput();
+		boolean check = omeroCheck || localCheck;
+
+		if (!onlineOutput.isSelected() && !localOutput.isSelected()) {
+			errorWindow(String.format("Output:%nYou have to choose the localisation to save the results"));
+			check = false;
 		}
 
+		check &= checkSelectedOutput();
+		check &= checkUploadLocalInput();
+		check &= checkDeleteROIs();
+
+		return check;
 	}
 
 }
